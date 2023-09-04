@@ -1,0 +1,1485 @@
+---
+title: "Mastomys sp. MHC II Parasites and Pestis"
+author: "Lavinia Gabriel, Dominik Schmid, Ramona Fleischer"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: united
+    highlight: tango
+    number_sections: false
+    toc: true
+    toc_float: true
+    toc_depth: 4
+---
+
+In this script we want to analyse MHC class II, parasite and yersinia pestis data of Mastomys natalensis
+
+Load packages
+
+```{r load-packages, message=FALSE, results='hide', warning = FALSE}
+x <-
+  c(
+    "plyr", "tidyverse", "vegan", "RColorBrewer", 
+     "rstatix", "car", "ggplot2", "vegan", "ggrepel", 
+    "DT", "ggpubr", "reshape2", "dplyr", "remotes", 
+    "effects", "glmmTMB", "ggeffects", "lme4", "cooccur", "ggpattern","MuMIn")
+
+
+lapply(x, function(y) {
+  # check if installed, if not install
+  if (!y %in% installed.packages()[, "Package"])
+    install.packages(y)
+  
+  # load package
+  try(require(y, character.only = T), silent = T)
+})
+
+#check loaded Rversion 
+
+R.Version()
+```
+
+# Load data
+
+```{r load-data, results='hide', echo=FALSE}
+meta <- read.csv("MT_MASTO_tANZANIA_RF.csv")
+#str(meta) # check column format
+names(meta)
+
+table(meta$Site)
+
+# correct the format of some columns
+meta$weight<-as.numeric(as.character(meta$weight))
+
+#str(meta) # check it worked
+```
+
+# Data overview
+
+```{r data-overview, echo=FALSE}
+table(meta$Site) 
+table(meta$Site, meta$Site_status)
+table(meta$Village, meta$Site)
+
+meta <- meta[-306 ,] # we remove the last row of the data frame, this includes a summary of columns and we don't need it
+
+# Infection prevalence
+
+table(meta$pestis_infection)  # i-Elisa results
+table(meta$pestis)            # pestis_infection in binary format
+table(meta$c_elisa)           # c-ELISA results
+
+table(meta$pestis_infection, meta$Site)  # PCR results
+table(meta$c_elisa, meta$Site)           # c-ELISA results
+
+# MHC diversity (Nr distinct amino acid alleles and Nr distinct ST)
+
+table(meta$Nr_of_alleles_aa)
+mean(meta$Nr_of_alleles_aa)
+sd(meta$Nr_of_alleles_aa)
+
+table(meta$Nr_ST)
+mean(meta$Nr_ST)
+sd(meta$Nr_ST)
+```
+
+# MHC Diversity
+
+```{r mhc-diversity visualization, echo=FALSE}
+## panel A: alleles
+
+allele_div_all <- ggplot(meta, aes(x=as.factor(Nr_of_alleles_aa)))+
+  geom_bar(color="black")+
+  theme_classic2(base_size=14)+
+  ylab(" ")+xlab(" ")+
+  theme(legend.position = "none",plot.title = element_text(size = 14, hjust = 0.5))+
+  ggtitle("Across all")
+
+allele_div_sites <- ggplot(meta, aes(x=as.factor(Nr_of_alleles_aa), fill = Site))+
+  geom_bar(color="black")+
+  theme_classic2(base_size=14)+
+  ylab("Individual number of MHC nucleotide alleles")+xlab(" ")+
+  facet_wrap(~Site, scales = "free", nrow=4)+
+  scale_fill_manual(values = c("#e28e2d","#e28e2d","#e28e2d","#007b37"))+
+  ylim(0,40)+
+  theme(strip.text.x = element_text(size = 14),legend.position = "none",plot.title = element_text(size = 14))+
+  ggtitle("A")
+
+allele_div <- ggarrange(allele_div_sites, allele_div_all,nrow=2, heights = c(4,1))
+
+## panel B: supertypes
+
+st_div_all <- ggplot(meta, aes(x=as.factor(Nr_ST)))+
+  geom_bar(color="black")+
+  theme_bw(base_size=14)+
+  ylab(" ")+xlab(" ")+
+  theme(legend.position = "none",plot.title = element_text(size = 14, hjust = 0.5), panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  ggtitle("Across all")
+
+st_div_sites <- ggplot(meta, aes(x=as.factor(Nr_ST), fill = Site))+
+  geom_bar(color="black")+
+  theme_bw(base_size=14)+
+  ylab("Individual number 
+of MHC ST")+xlab(" ")+
+  facet_wrap(~Site, scales = "free", nrow=4)+
+  scale_fill_manual(values = c("#e28e2d","#e28e2d","#e28e2d","#007b37"))+
+  ylim(0,50)+
+  theme(strip.text.x = element_text(size = 11),legend.position = "none",plot.title = element_text(size = 11),panel.grid.major = element_blank(),panel.grid.minor = element_blank(), strip.background = element_rect(fill = "white"))+
+  ggtitle("B")
+
+
+st_div <- ggarrange(st_div_sites, st_div_all,nrow=2, heights = c(4,1))
+
+require(gridExtra)
+
+grid.arrange(allele_div, st_div, ncol=2)
+```
+
+Several nucleotide alleles translate in identical amino acid sequences:
+
+1)  Alleles 4, 15, 16, 32, 93, 105
+
+2)  Alleles 89 and 97
+
+3)  Alleles 1, 20 and 94
+
+4)  Alleles 64, 75, and 111
+
+5)  Alleles 9 and 33
+
+6)  Alleles 21, 42 and 43
+
+7)  Alleles 3, 24, and 66
+
+# Pestis across sites
+
+```{r pestis across sites visualization, echo=FALSE}
+
+# we need a column that indicates which individuals were uninfected
+meta_edited <- meta %>% 
+  mutate(pestis_uninfected = ifelse(pestis == 0 & c_elisa ==0, "1", "0"))
+
+table(meta_edited$pestis_infection, meta_edited$pestis) # check it worked
+
+# arrange data for plotting
+pestis_long <- gather(meta_edited, pestis_infection_status, Count, pestis_uninfected, pestis, c_elisa, factor_key = TRUE)
+pestis_long <- subset(pestis_long, Count != "0") # remove zero counts
+
+# plot
+pestis.figure <- ggplot(pestis_long, aes(x =Site, fill=pestis_infection_status))+
+  geom_bar(position="stack", color = "black")+
+  scale_fill_manual(name = c("Pestis infection
+status"), labels = c("Uninfected" ,"I  ELISA","C ELISA"), values = c("grey", "brown3", "brown4"))+
+  labs(x=" ",y="Number of individuals")+
+  theme_classic2(base_size=14)+
+  xlab("")+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.ticks.x = element_blank(), axis.text.x=element_text(size=14))
+
+pestis.figure
+```
+
+# Fleas across ssites
+
+```{r across sites visualization, echo=FALSE}
+
+meta_edited2 <- meta_edited %>% 
+  mutate(no_fleas = ifelse(Dinopsyllus  == 0| Xenopsylla == 0| Nosopsylla == 0| Ctenophthalmus == 0| Cediopsylla == 0| Leptopsylla == 0,"1", "0"))
+
+table(meta_edited2$no_fleas, meta_edited2$Fleas_No) # check it worked
+
+# arrange data for plotting
+fleas_long <- gather(meta_edited2, parasite_status, Count, no_fleas, Dinopsyllus, Xenopsylla, Nosopsylla, Ctenophthalmus, Cediopsylla, Leptopsylla, factor_key = TRUE)
+fleas_long <- subset(fleas_long, Count != "0") # remove zero counts
+
+# plot
+flea.figure <- ggplot(fleas_long, aes(x =Site, fill=parasite_status))+
+  geom_bar(position="stack", color = "black")+
+  scale_fill_manual(name = c("Flea"),labels = c("No Flea" ,"Dinopsyllus", "Xenopsylla", "Nosopsylla", "Ctenophthalmus", "Cediopsylla", "Leptopsylla"),  values = c("grey", "#5ccfff",
+                                                                                                                                                                   "#c69314",
+                                                                                                                                                                   "#7178eb",
+                                                                                                                                                                   "#527f00",
+                                                                                                                                                                   "#cf2b59",
+                                                                                                                                                                   "#009860"))+
+  labs(x=" ",y="Number of individuals")+
+  theme_classic2(base_size=14)+
+  xlab("")+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.ticks.x = element_blank(), axis.text.x=element_text(size=14))
+
+flea.figure
+```
+
+# MHC allele frequency
+
+```{r mhc-allele-frequency-all, echo=FALSE}
+# make into long format
+meta_long <- gather(meta, MHC_allele, presence, 
+                    MHC.DRB.001:MHC.DRB.113, 
+                    factor_key=TRUE)
+
+# summarize allele frequency 
+MHCsummary<-ddply(meta_long, c("MHC_allele"), summarise, 
+      frequency=sum(presence)/length(MHC_allele), 
+      length=length(MHC_allele),
+      number=sum(presence))
+
+# simplify allele names using gsub: let's remove the MHC and dots and instead add a star
+MHCsummary$MHC_allele <- gsub("[MHC.]","", MHCsummary$MHC_allele)
+MHCsummary$MHC_allele <- gsub("^(.{3})(.*)$",         
+                       "\\1*\\2",
+                       MHCsummary$MHC_allele)
+MHCsummary$MHC_allele <- gsub("[DRB]","", MHCsummary$MHC_allele)
+
+# plot showing supertype frequency 
+Figure_S1a_all <- ggplot(MHCsummary, aes(MHC_allele, frequency))+
+  geom_bar(stat="identity", color = "black")+
+  theme_classic2(base_size=12)+
+  theme(axis.text.x = element_text(size=8, angle=90, vjust=0.5),plot.title = element_text(hjust = 0.5, size = 14))+
+  ylab("Frequency")+xlab("MHC class II allele names")+
+  scale_fill_manual(values = c("grey"))+
+  ggtitle("Across all")+
+  ylim(0,0.75)
+
+Figure_S1a_all
+```
+
+```{r mhc-allele-frequency-sites, echo=FALSE}
+# summarize allele frequency for each site
+MHCsummary<-ddply(meta_long, c("Site","MHC_allele"), summarise, 
+      frequency=sum(presence)/length(MHC_allele), 
+      length=length(MHC_allele),
+      number=sum(presence))
+
+# simplify allele names using gsub: let's remove the MHC and dots and instead add a star
+MHCsummary$MHC_allele <- gsub("[MHC.]","", MHCsummary$MHC_allele)
+MHCsummary$MHC_allele <- gsub("^(.{3})(.*)$",         
+                       "\\1*\\2",
+                       MHCsummary$MHC_allele)
+MHCsummary$MHC_allele <- gsub("[DRB]","", MHCsummary$MHC_allele)
+
+# plot showing allele frequency per site - 5 % threshold
+
+Figure_S1a <- ggplot(MHCsummary, aes(MHC_allele, frequency, fill = Site))+
+  geom_bar(stat="identity", color = "black")+
+  theme_classic2(base_size=12)+
+  geom_hline(yintercept = .05, lty="dashed")+
+  theme(strip.text.x = element_text(size = 14),axis.text.x = element_text(size=8, angle=90, vjust=0.5))+
+  ylab("MHC class II nucleotide allele frequency")+xlab(" ")+
+  facet_wrap(~Site, scales = "free", nrow=4)+
+  scale_fill_manual(values = c("#e28e2d","#e28e2d","#e28e2d","#007b37"))+
+  ylim(0,0.75)
+
+Figure_S1a 
+```
+
+# MHC ST frequency
+
+```{r mhc-supertype-frequency-all, echo=FALSE}
+# change order of sites
+meta$Site <- factor(meta$Site, levels = c("Iringa","Lushoto", "Mbulu", "Mvomero"))
+
+# make into long format
+meta_long <- gather(meta, MHC_st, presence, 
+                    STP1:STP9, 
+                    factor_key=TRUE)
+
+# summarize supertype frequency
+MHCsummary_st<-ddply(meta_long, c("MHC_st"), summarise, 
+      frequency=sum(presence)/length(MHC_st), 
+      length=length(MHC_st),
+      number=sum(presence))
+
+# plot showing supertype frequency 
+Figure_S1b_all <- ggplot(MHCsummary_st, aes(MHC_st, frequency))+
+  geom_bar(stat="identity", color = "black")+
+  theme_classic2(base_size=12)+
+  theme(axis.text.x = element_text(size=8, angle=90, vjust=0.5),plot.title = element_text(hjust = 0.5, size = 14))+
+  ylim(0,1)+
+  ylab("Frequency")+xlab("MHC class II ST names")+
+  scale_fill_manual(values = c("grey"))+
+  ggtitle("Across all")
+
+Figure_S1b_all
+```
+
+```{r mhc-supertype-frequency-sites, echo=FALSE}
+# summarize supertype frequence for each site
+MHCsummary_st<-ddply(meta_long, c("Site","MHC_st"), summarise, 
+      frequency=sum(presence)/length(MHC_st), 
+      length=length(MHC_st),
+      number=sum(presence))
+
+# plot showing supertype frequency per site - 10 % threshold
+Figure_S1b <- ggplot(MHCsummary_st, aes(MHC_st, frequency, fill = Site))+
+  geom_bar(stat="identity", color = "black")+
+  theme_classic2(base_size=12)+
+  geom_hline(yintercept = .10, lty="dashed")+
+  theme(strip.text.x = element_text(size = 14),axis.text.x = element_text(size=8, angle=90, vjust=0.5), strip.background = element_rect(fill = "white"))+
+  ylim(0,1)+
+  ylab("MHC class II ST frequency")+xlab(" ")+
+  facet_wrap(~Site, scales = "free", nrow=4)+
+  scale_fill_manual(values = c("#e28e2d","#e28e2d","#e28e2d","#007b37"))
+
+Figure_S1b
+```
+
+Supplementary Figure NEW
+
+```{r}
+ggarrange(Figure_S1b,Figure_S1b_all, ncol=1, heights=c(3.5,1), common.legend= TRUE, legend="right")
+```
+
+
+```{r combined panels for mhc constitution}
+ggarrange(Figure_S1a, Figure_S1b, Figure_S1a_all, Figure_S1b_all, 
+          nrow=2, ncol=2,
+          heights = c(4,1), 
+          widths = c(3,1),
+          common.legend= TRUE, legend = "right",
+          labels = c("A","B"))
+```
+
+# Variation across sites
+
+## MHC alleles
+
+```{r allele-variation-across-sites, echo=FALSE}
+meta_allele <- meta %>%
+  select("Site","MHC.DRB.001",
+"MHC.DRB.002",
+"MHC.DRB.003",
+"MHC.DRB.004",
+"MHC.DRB.005",
+"MHC.DRB.006",
+"MHC.DRB.007",
+"MHC.DRB.008",
+"MHC.DRB.009",
+"MHC.DRB.010",
+"MHC.DRB.011",
+"MHC.DRB.012",
+"MHC.DRB.013",
+"MHC.DRB.014",
+"MHC.DRB.015",
+"MHC.DRB.016",
+"MHC.DRB.017",
+"MHC.DRB.018",
+"MHC.DRB.019",
+"MHC.DRB.020",
+"MHC.DRB.021",
+"MHC.DRB.022",
+"MHC.DRB.023",
+"MHC.DRB.024",
+"MHC.DRB.025",
+"MHC.DRB.026",
+"MHC.DRB.027",
+"MHC.DRB.028",
+"MHC.DRB.030",
+"MHC.DRB.031",
+"MHC.DRB.032",
+"MHC.DRB.033",
+"MHC.DRB.034",
+"MHC.DRB.035",
+"MHC.DRB.036",
+"MHC.DRB.037",
+"MHC.DRB.038",
+"MHC.DRB.039",
+"MHC.DRB.040",
+"MHC.DRB.041",
+"MHC.DRB.042",
+"MHC.DRB.043",
+"MHC.DRB.044",
+"MHC.DRB.045",
+"MHC.DRB.046",
+"MHC.DRB.047",
+"MHC.DRB.048",
+"MHC.DRB.049",
+"MHC.DRB.050",
+"MHC.DRB.051")
+
+meta_allele1 <-meta_allele[rowSums(meta_allele[, -1])>0, ] # remove rows with only zeros
+
+anosim(as.matrix(meta_allele1 %>%
+  select("MHC.DRB.001",
+"MHC.DRB.002",
+"MHC.DRB.003",
+"MHC.DRB.004",
+"MHC.DRB.005",
+"MHC.DRB.006",
+"MHC.DRB.007",
+"MHC.DRB.008",
+"MHC.DRB.009",
+"MHC.DRB.010",
+"MHC.DRB.011",
+"MHC.DRB.012",
+"MHC.DRB.013",
+"MHC.DRB.014",
+"MHC.DRB.015",
+"MHC.DRB.016",
+"MHC.DRB.017",
+"MHC.DRB.018",
+"MHC.DRB.019",
+"MHC.DRB.020",
+"MHC.DRB.021",
+"MHC.DRB.022",
+"MHC.DRB.023",
+"MHC.DRB.024",
+"MHC.DRB.025",
+"MHC.DRB.026",
+"MHC.DRB.027",
+"MHC.DRB.028",
+"MHC.DRB.030",
+"MHC.DRB.031",
+"MHC.DRB.032",
+"MHC.DRB.033",
+"MHC.DRB.034",
+"MHC.DRB.035",
+"MHC.DRB.036",
+"MHC.DRB.037",
+"MHC.DRB.038",
+"MHC.DRB.039",
+"MHC.DRB.040",
+"MHC.DRB.041",
+"MHC.DRB.042",
+"MHC.DRB.043",
+"MHC.DRB.044",
+"MHC.DRB.045",
+"MHC.DRB.046",
+"MHC.DRB.047",
+"MHC.DRB.048",
+"MHC.DRB.049",
+"MHC.DRB.050",
+"MHC.DRB.051")), meta_allele1$Site, permutations = 999, distance="jaccard")
+```
+
+This shows sites differ in allele composition - so we have to analyse allele - pestis / flea co-occurrence for each site separately
+
+## MHC STs
+
+```{r}
+meta_sts <- meta %>%
+  select("Site","STP1",
+         "STP2",
+         "STP3",
+         "STP4",
+         "STP5",
+         "STP6",
+         "STP7",
+         "STP8",
+         "STP9")
+
+meta_sts1 <- meta_sts[rowSums(meta_sts[, -1])>0, ] # remove rows with only zeros
+
+anosim(as.matrix(meta_sts1 %>%
+                   select("STP1",
+                          "STP2",
+                          "STP3",
+                          "STP4",
+                          "STP5",
+                          "STP6",
+                          "STP7",
+                          "STP8",
+                          "STP9")), meta_sts1$Site, permutations = 999, distance="jaccard")
+```
+
+## Fleas
+
+Does the abundance of the two most common fleas differ across sites? <br> We will test this using binomial glms, because the flea info is binary (presence / absence) <br> Further we have to "relevel" the site column, so we have all possible site comparisons <br>
+
+```{r flea-variation-across-sites, echo=FALSE}
+# 1) Dinopsyllus
+m <- glm(Dinopsyllus ~ Site, family = binomial, data = meta) # here all sites are compared with Iringa
+summary(m)
+
+meta$Site <- relevel(meta$Site, ref = "Lushoto")             # now we want to compare all sites to Lushoto
+m <- glm(Dinopsyllus ~ Site, family = binomial, data = meta)
+summary(m)
+
+meta$Site <- relevel(meta$Site, ref = "Mbulu")               # now we want to compare all sites to Mbulu
+m <- glm(Dinopsyllus ~ Site, family = binomial, data = meta)
+summary(m)
+
+meta$Site <- relevel(meta$Site, ref = "Mvomero")             # now we want to compare all sites to Mvomero
+m <- glm(Dinopsyllus ~ Site, family = binomial, data = meta)
+summary(m)
+
+
+# 2) Xenopsylla
+m <- glm(Xenopsylla ~ Site, family = binomial, data = meta)
+summary(m)
+
+meta$Site <- relevel(meta$Site, ref = "Lushoto")             # now we want to compare all sites to Lushoto
+m <- glm(Xenopsylla ~ Site, family = binomial, data = meta)  
+summary(m)
+
+meta$Site <- relevel(meta$Site, ref = "Mbulu")               # now we want to compare all sites to Mbulu
+m <- glm(Xenopsylla ~ Site, family = binomial, data = meta)  
+summary(m)
+
+meta$Site <- relevel(meta$Site, ref = "Mvomero")             # now we want to compare all sites to Mvomero
+m <- glm(Xenopsylla ~ Site, family = binomial, data = meta)  
+summary(m)
+```
+
+## MHC supertypes
+
+Do sites differ in supertype composition?
+
+```{r supertype-variation-across-sites, echo=FALSE}
+meta_st <- meta %>%
+  select("Site","STP1","STP2","STP3","STP4","STP5","STP6","STP7","STP8","STP9")
+
+meta_st1 <-meta_st[rowSums(meta_st[, -1])>0, ] # remove rows with only zeros
+
+anosim(as.matrix(meta_st1 %>%
+  select("STP1","STP2","STP3","STP4","STP5","STP6","STP7","STP8","STP9")), meta_st1$Site, permutations = 999, distance="jaccard")
+```
+
+# Pestis \~ fleas
+
+Are fleas linked to pestis?
+
+```{r test-flea-and-pestis-link, echo=FALSE}
+meta$Fleas_No <- as.numeric(as.character(meta$Fleas_No)) # if not already, make into numeric format
+
+pestis_prev<-ddply(meta, c("Site"), summarise, 
+                   n=length(c_elisa),
+       prevalence=sum(c_elisa)/length(c_elisa), #pestis
+       number_fleas=sum(Fleas_No)/length(Fleas_No)) #Fleas_No #Dinopsyllus #Xenopsylla #Nosopsylla #Ctenophthalmus #Cediopsylla (only present once) #leptopsylla 
+
+ggplot(pestis_prev, aes( prevalence,number_fleas ))+ geom_point()+geom_smooth(method="lm")
+
+ggplot(meta, aes(as.factor(c_elisa), Fleas_No))+geom_boxplot()
+
+
+
+meta$fleas_Pres <- ifelse(meta$Fleas_No=="0",0,1)
+
+pestis_prev<-ddply(meta, c("Site"), summarise, 
+                   n=length(pestis),
+       prevalence=sum(pestis)/length(pestis), #pestis
+       number_fleas=sum(fleas_Pres)/n) #Fleas_No #Dinopsyllus #Xenopsylla #Nosopsylla #Ctenophthalmus #Cediopsylla (only present once) #leptopsylla 
+
+ggplot(pestis_prev, aes( prevalence,number_fleas))+ geom_point()+geom_smooth(method="lm")
+```
+
+Unfortunately we can't find any connection between flea infection and pestis prevalence or presence. We do not need any of the figures.
+
+# Co-occurrence
+
+Since the sites differ in MHC allele and ST composition we have to calculate co-occurrence per site <br> to make it comparable we need an allele threshold for each site <br> we could only include alleles that are present at 5% in each site <br>
+
+```{r separate-dataset, echo=FALSE}
+meta_Iringa  <- subset(meta, Site == "Iringa")    # 75 indiv
+meta_lushoto <- subset(meta, Site == "Lushoto")   # 117 indiv
+meta_mbulu <- subset(meta, Site == "Mbulu")       # 73 indiv
+meta_mvomero <- subset(meta, Site == "Mvomero")   # 40 indiv
+```
+
+## MHC alleles - pestis
+
+## Iringa
+
+```{r co-occurrence-alleles-pestis-iringa, echo=FALSE}
+table(meta_Iringa$pestis)                                                    # how frequent is the infection in Iringa?
+
+co.Iringa <- subset(meta_Iringa, select=c(pestis, MHC.DRB.001:MHC.DRB.113))  # select alleles and the pathogen
+
+co.Iringa_red <- co.Iringa[, colSums(co.Iringa !=0) > 0]                     # make sure there are no zeros in this df
+co.Iringa_red1 <- co.Iringa_red[, colSums(co.Iringa_red) > 3]                # only keep alleles that are present in at least 4 individuals (this is the 5% threshold for Iringa)
+
+co.Iringa_long <- t(as.matrix(co.Iringa_red1))                               # create matrix and transpose
+```
+
+```{r, echo=FALSE, results='hide'}
+# apply cooccurrence
+cooccur.Iringa <- cooccur(mat = co.Iringa_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.Iringa)                   # short summary
+plot(cooccur.Iringa)                      # square plot
+
+pair(mod = cooccur.Iringa, "pestis")      # print all that was sign. associated with pestis
+
+#prob.table(cooccur.Iringa) # table of expected & observed cooccurrence and p-values
+
+st.effSize.alleles<-effect.sizes(cooccur.Iringa, standardized = TRUE, matrix = FALSE)  # standardized effect sizes
+#write.csv(st.effSize.alleles,"st.effSize.alleles.csv")
+
+# subset only AstV-associated results
+res <- cooccur.Iringa$results
+
+str(cooccur.Iringa)
+
+res_final <- subset(res, sp1_name=="pestis")
+
+# rename some variables for the plot
+colnames(res_final)[5] <- "Observed"
+colnames(res_final)[7] <- "Expected"
+```
+
+No allele linked to pestis here
+
+
+## Lushoto
+
+```{r co-occurrence-alleles-pestis-lushoto, echo=FALSE}
+table(meta_lushoto$pestis)                                                    # how frequent is the infection in Lushoto?
+```
+
+For a 5% threshold we would need at least 6 indiv. with infection which means the co-occurrence is not meaningful
+
+## Mbulu
+
+```{r co-occurrence-alleles-pestis-mbulu, echo=FALSE}
+table(meta_mbulu$pestis)                                                      # how frequent is the infection in Mbulu?
+
+co.mbulu <- subset(meta_mbulu, select=c(pestis, MHC.DRB.001:MHC.DRB.113))
+
+co.mbulu_red <- co.mbulu[, colSums(co.mbulu !=0) > 0] 
+co.mbulu_red1 <- co.mbulu_red[, colSums(co.mbulu_red) > 3]                    # only keep alleles that are present in at least 5 individuals (this is the 5% threshold for Mbulu)
+
+co.mbulu_long <- t(as.matrix(co.mbulu_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.mbulu <- cooccur(mat = co.mbulu_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.mbulu)              # short summary
+plot(cooccur.mbulu)                 # square plot
+
+pair(mod = cooccur.mbulu, "pestis") # print all that was sign. associated with pestis
+```
+
+No allele associated with pestis here
+
+## Mvomero
+
+```{r co-occurrence-alleles-pestis-mvomero, echo=FALSE}
+table(meta_mvomero$pestis)                                                     # how frequent is the infection in Mvomero?
+
+co.mvomero <- subset(meta_mvomero, select=c(pestis, MHC.DRB.001:MHC.DRB.113))
+
+co.mvomero_red <- co.mvomero[, colSums(co.mvomero !=0) > 0]
+co.mvomero_red1 <- co.mvomero_red[, colSums(co.mvomero_red) > 1]               # only keep alleles that are present in at least 2 individuals (this is the 5% threshold for Mvomero, however 2 is very low, so we tested a threshold of > 4, the result was the same)
+
+co.mvomero_long <- t(as.matrix(co.mvomero_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.mvomero <- cooccur(mat = co.mvomero_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.mvomero)              # short summary
+plot(cooccur.mvomero)                 # square plot
+
+pair(mod = cooccur.mvomero, "pestis") # print all that was sign. associated with pestis
+```
+
+```{r, echo=FALSE, results='hide'}
+############# here test with a higher threshold of > 4 individuals #############
+#co.mvomero_red <- co.mvomero[, colSums(co.mvomero !=0) > 0]
+#co.mvomero_red1 <- co.mvomero_red[, colSums(co.mvomero_red) > 4]               
+
+#co.mvomero_long <- t(as.matrix(co.mvomero_red1))
+
+# apply cooccurrence
+#cooccur.mvomero <- cooccur(mat = co.mvomero_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+
+#pair(mod = cooccur.mvomero, "pestis") # print all that was sign. associated with pestis
+```
+
+Here we have an association: positive with allele DRB\*014 (p-value 0.0457)
+
+## MHC alleles - fleas
+
+## Iringa
+
+Note: Only Dinopsyllus found across all sites
+
+```{r co-occurrence-alleles-fleas-iringa, echo=FALSE}
+table(meta_Iringa$Dinopsyllus)
+table(meta_Iringa$Xenopsylla)
+
+co.Iringa <- subset(meta_Iringa, select=c(Dinopsyllus, Xenopsylla, MHC.DRB.001:MHC.DRB.113))
+
+co.Iringa_red <- co.Iringa[, colSums(co.Iringa !=0) > 0] # make sure there are no zeros in this df
+co.Iringa_red1 <- co.Iringa_red[, colSums(co.Iringa_red) > 3]
+
+co.Iringa_long <- t(as.matrix(co.Iringa_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.Iringa <- cooccur(mat = co.Iringa_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.Iringa) # short summary
+plot(cooccur.Iringa)    # square plot
+
+pair(mod = cooccur.Iringa, "Dinopsyllus") 
+pair(mod = cooccur.Iringa, "Xenopsylla")
+
+#prob.table(cooccur.Iringa) # table of expected & observed cooccurrence and p-values
+
+st.effSize.alleles<-effect.sizes(cooccur.Iringa, standardized = TRUE, matrix = FALSE)  # standardized effect sizes
+
+res <- cooccur.Iringa$results
+res_final <- subset(res, sp1_name=="Dinopsyllus")
+res_final <- subset(res_final, sp2_name != "Xenopsylla")
+
+# rename some variables for the plot
+colnames(res_final)[5] <- "Observed"
+colnames(res_final)[7] <- "Expected"
+```
+
+```{r cooccurrence-alleles visualisation-iringa, echo=FALSE}
+res_edited <- res_final %>% 
+  mutate(Sig = ifelse(p_gt <= 0.05| p_lt <= 0.05, "significant", "non-significant")) #creates a column with significance characters
+
+# Here we substract the expected from the actual observed co-occurrence. After that we have a value for the difference (= delta)
+
+res_edited$delta<-res_edited$Observed-res_edited$Expected
+
+iringa_results<-res_edited # save separately
+
+subset_res_edited<-res_edited[c(10, 12),] # takes only columns with alleles associated with significant results 
+
+subset_res_edited$correlated<-c("correlated","correlated")
+
+iringa_res_edited <- subset_res_edited
+
+dino.iringa <- ggplot(data = subset_res_edited,
+       aes(x = sp2_name,
+           y = delta,
+           fill = Sig,
+           pattern = correlated)) +
+  geom_bar_pattern(stat = 'identity', position = position_dodge2(preserve = 'single'), colour="black",
+                   pattern_fill = "white",
+                   pattern_angle = 45,
+                   pattern_density = 0.1,
+                   pattern_spacing = 0.025,
+                   pattern_key_scale_factor = 0.6) +
+  scale_pattern_manual(values = c('correlated' = 'stripe')) +
+  scale_fill_manual(values = c("firebrick3")) +
+  theme_classic(base_size = 10) + facet_wrap(~sp1_name, nrow=2)+theme(axis.text.x = element_text(size = 10, angle=90, vjust=0.5),axis.title.y =   element_text(size = 15), legend.position = "none")+labs(x="", y="Difference between expected and observed co-occurrence")+
+  ylim(0,6)
+```
+
+Allele DRB.014 and DRB.016 are positively associated with Dinopsyllus
+
+## Lushoto
+
+```{r co-occurrence-alleles-fleas-lushoto, echo=FALSE}
+table(meta_lushoto$Dinopsyllus)
+table(meta_lushoto$Xenopsylla)
+
+co.lushoto <- subset(meta_lushoto, select=c(Dinopsyllus, Xenopsylla, MHC.DRB.001:MHC.DRB.113))
+
+co.lushoto_red <- co.lushoto[, colSums(co.lushoto !=0) > 0] # make sure there are no zeros in this df
+co.lushoto_red1 <- co.lushoto_red[, colSums(co.lushoto_red) > 5]
+
+co.lushoto_long <- t(as.matrix(co.lushoto_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.lushoto <- cooccur(mat = co.lushoto_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.lushoto) # short summary
+plot(cooccur.lushoto)    # square plot
+
+pair(mod = cooccur.lushoto, "Dinopsyllus") 
+pair(mod = cooccur.lushoto, "Xenopsylla")
+
+#prob.table(cooccur.lushoto) # table of expected & observed cooccurrence and p-values
+
+st.effSize.alleles<-effect.sizes(cooccur.lushoto, standardized = TRUE, matrix = FALSE)  # standardized effect sizes
+
+res <- cooccur.lushoto$results
+
+res_final <- subset(res, sp1_name=="Dinopsyllus")
+
+# rename some variables for the plot
+colnames(res_final)[5] <- "Observed"
+colnames(res_final)[7] <- "Expected"
+```
+
+```{r cooccurrence-alleles visualisation-lushoto, echo=FALSE}
+
+res_edited <- res_final %>% 
+  mutate(Sig = ifelse(p_gt <= 0.05| p_lt <= 0.05, "significant", "non-significant")) #creates a column with significance characters
+
+# Here we substract the expected from the actual observed co-occurrence. After that we have a value for the difference (= delta)
+
+res_edited$delta<-res_edited$Observed-res_edited$Expected
+
+lushoto_results<-res_edited 
+
+subset_res_edited<-res_edited[c(5),] # takes only columns with alleles associated with significant results 
+
+subset_res_edited$correlated<-c("correlated")
+
+lushoto_res_edited <- subset_res_edited
+
+dino.lushoto <- ggplot(data = subset_res_edited,
+       aes(x = sp2_name,
+           y = delta,
+           fill = Sig,
+           pattern = correlated)) +
+  geom_bar_pattern(stat = 'identity', position = position_dodge2(preserve = 'single'), colour="black",
+                   pattern_fill = "white",
+                   pattern_angle = 45,
+                   pattern_density = 0.1,
+                   pattern_spacing = 0.025,
+                   pattern_key_scale_factor = 0.6) +
+  scale_pattern_manual(values = c('correlated' = 'stripe')) +
+  scale_fill_manual(values = c("firebrick3")) +
+  theme_classic(base_size = 10) + facet_wrap(~sp1_name, nrow=2)+theme(axis.text.x = element_text(size = 10, angle=90, vjust=0.5),axis.title.y =   element_text(size = 15), legend.position = "none")+labs(x="", y="Difference between expected and observed co-occurrence")+
+  ylim(0,6)
+```
+
+## Mbulu
+
+```{r co-occurrence-alleles-fleas-mbulu, echo=FALSE}
+table(meta_mbulu$Dinopsyllus)
+table(meta_mbulu$Xenopsylla)
+
+co.mbulu <- subset(meta_mbulu, select=c(Dinopsyllus, Xenopsylla, MHC.DRB.001:MHC.DRB.113))
+
+co.mbulu_red <- co.mbulu[, colSums(co.mbulu !=0) > 0] 
+co.mbulu_red1 <- co.mbulu_red[, colSums(co.mbulu_red) > 3]
+
+co.mbulu_long <- t(as.matrix(co.mbulu_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.mbulu <- cooccur(mat = co.mbulu_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.mbulu) # short summary
+plot(cooccur.mbulu)    # square plot
+
+pair(mod = cooccur.mbulu, "Dinopsyllus") 
+pair(mod = cooccur.mbulu, "Xenopsylla") 
+
+#prob.table(cooccur.mbulu) # table of expected & observed cooccurrence and p-values
+
+st.effSize.alleles<-effect.sizes(cooccur.mbulu, standardized = TRUE, matrix = FALSE)  # standardized effect sizes
+
+res <- cooccur.mbulu$results
+
+res_final <- subset(res, sp1_name=="Xenopsylla")
+
+# rename some variables for the plot
+colnames(res_final)[5] <- "Observed"
+colnames(res_final)[7] <- "Expected"
+```
+
+```{r cooccurrence-alleles visualisation mbulu, echo=FALSE}
+res_edited <- res_final %>% 
+  mutate(Sig = ifelse(p_gt <= 0.05| p_lt <= 0.05, "significant", "non-significant")) #creates a column with significance characters
+
+# Here we substract the expected from the actual observed co-occurrence. After that we have a value for the difference (= delta)
+
+res_edited$delta<-res_edited$Observed-res_edited$Expected
+
+mbulu_results<-res_edited 
+
+subset_res_edited<-res_edited[c(13,14,19),] # takes only columns with alleles associated with significant results 
+
+subset_res_edited$correlated<-c("correlated","correlated","correlated")
+
+mbulu_res_edited <- subset_res_edited
+
+xeno.mbulu <- ggplot(data = subset_res_edited,
+       aes(x = sp2_name,
+           y = delta,
+           fill = Sig,
+           pattern = correlated)) +
+  geom_bar_pattern(stat = 'identity', position = position_dodge2(preserve = 'single'), colour="black",
+                   pattern_fill = "white",
+                   pattern_angle = 45,
+                   pattern_density = 0.1,
+                   pattern_spacing = 0.025,
+                   pattern_key_scale_factor = 0.6) +
+  scale_pattern_manual(values = c('correlated' = 'stripe')) +
+  scale_fill_manual(values = c("firebrick3")) +
+  theme_classic(base_size = 10) + facet_wrap(~sp1_name, nrow=2)+theme(axis.text.x = element_text(size = 10, angle=90, vjust=0.5),axis.title.y =   element_text(size = 15), legend.position = "none")+labs(x="", y="Difference between expected and observed co-occurrence")+
+  ylim(0,6)
+```
+
+Since we don't have that many associations in total, let's plot all sign. results together
+
+```{r final co-occurrence plot, echo=FALSE}
+
+res_dino <- rbind(iringa_res_edited, lushoto_res_edited)  # bind rows of results for iringa and lushoto, since both are with Dino
+
+res_dino$sp2_name <- gsub("[MHC.]","", res_dino$sp2_name) # shorten allele names
+res_dino$sp2_name <- gsub("^(.{3})(.*)$",         
+                       "\\1*\\2",
+                       res_dino$sp2_name)
+res_dino$sp2_name <- gsub("[DRB]","", res_dino$sp2_name)
+
+
+res_xeno <- mbulu_res_edited
+
+res_xeno$sp2_name <- gsub("[MHC.]","", res_xeno$sp2_name)
+res_xeno$sp2_name <- gsub("^(.{3})(.*)$",         
+                       "\\1*\\2",
+                       res_xeno$sp2_name)
+res_xeno$sp2_name <- gsub("[DRB]","", res_xeno$sp2_name)
+
+
+co1 <- ggplot(data = res_dino,
+              aes(x = sp2_name,
+                  y = delta,
+                  fill = Sig,
+                  pattern = correlated)) +
+  geom_bar(stat = 'identity', position = position_dodge2(preserve = 'single'), colour="black") +
+  scale_fill_manual(values = c("firebrick3")) +
+  theme_classic(base_size = 12) + facet_wrap(~sp1_name, nrow=2)+theme(axis.text.x = element_text(size = 10, angle=90, vjust=0.5),axis.title.y =   element_text(size = 15), legend.position = "none")+labs(x="", y="Difference between expected and observed")+
+  ylim(0,6)
+
+library(grid)
+
+text_high <- textGrob("Lushoto", gp=gpar(fontsize=13, fontface="bold"))
+text_low <- textGrob("Iringa", gp=gpar(fontsize=13, fontface="bold"))
+
+co1.edited <- co1 +
+  annotation_custom(text_high,xmin=1,xmax=1,ymin=-1.2,ymax=-1.2) + 
+  annotation_custom(text_low,xmin=2.5,xmax=2.5,ymin=-1.2,ymax=-1.2)+
+  coord_cartesian(clip="off")
+
+
+co2 <- ggplot(data = res_xeno,
+              aes(x = sp2_name,
+                  y = delta,
+                  fill = Sig)) +
+  geom_bar(stat = 'identity', position = position_dodge2(preserve = 'single'), color = "black") +
+  scale_fill_manual(values = c("firebrick3")) +
+  theme_classic(base_size = 12) + facet_wrap(~sp1_name, nrow=2)+theme(axis.text.x = element_text(size = 10, angle=90, vjust=0.5),axis.title.y =   element_text(size = 15), legend.position = "none")+labs(x="", y="Difference between expected and observed")+
+  ylim(0,6)
+
+text_mid <- textGrob("Mbulu", gp=gpar(fontsize=13, fontface="bold"))
+
+co2.edited <- co2 +
+annotation_custom(text_mid,xmin=2,xmax=2,ymin=-1.2,ymax=-1.2) + 
+  coord_cartesian(clip="off")
+
+
+ggarrange(co1.edited, co2.edited, labels = c("A", "B"))
+```
+
+We double-checked whether it makes a difference if we test each flea separately, but the results stay the same.
+
+```{r, echo=FALSE}
+# puh, since here everything is co-correlated, the two fleas and the two associated alleles, let's try and separate fleas to see if that changes the results
+
+# 1) Dinopsyllus
+
+co.mbulu <- subset(meta_mbulu, select=c(Dinopsyllus, MHC.DRB.001:MHC.DRB.113))
+
+co.mbulu_red <- co.mbulu[, colSums(co.mbulu !=0) > 0] # make sure there are no zeros in this df
+co.mbulu_red1 <- co.mbulu_red[, colSums(co.mbulu_red) > 3]
+
+# create matrix and transpose
+
+co.mbulu_long <- t(as.matrix(co.mbulu_red1))
+
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.mbulu <- cooccur(mat = co.mbulu_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.mbulu) # short summary
+plot(cooccur.mbulu)    # square plot
+
+pair(mod = cooccur.mbulu, "Dinopsyllus") 
+```
+
+Nothing associated with Dinopsyllus
+
+```{r}
+# 2) Xenopsylla
+
+co.mbulu <- subset(meta_mbulu, select=c(Xenopsylla, MHC.DRB.001:MHC.DRB.113))
+
+co.mbulu_red <- co.mbulu[, colSums(co.mbulu !=0) > 0] # make sure there are no zeros in this df
+co.mbulu_red1 <- co.mbulu_red[, colSums(co.mbulu_red) > 3]
+
+# create matrix and transpose
+
+co.mbulu_long <- t(as.matrix(co.mbulu_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.mbulu <- cooccur(mat = co.mbulu_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.mbulu) # short summary
+plot(cooccur.mbulu)    # square plot
+
+pair(mod = cooccur.mbulu, "Xenopsylla") 
+```
+
+
+## Mvomero
+
+```{r co-occurrence-alleles-fleas-mvomero, echo=FALSE}
+table(meta_mvomero$Dinopsyllus)
+table(meta_mvomero$Xenopsylla) # not present here
+
+co.mvomero <- subset(meta_mvomero, select=c(Dinopsyllus, MHC.DRB.001:MHC.DRB.113))
+
+co.mvomero_red <- co.mvomero[, colSums(co.mvomero !=0) > 0] # make sure there are no zeros in this df
+co.mvomero_red1 <- co.mvomero_red[, colSums(co.mvomero_red) > 1]
+
+co.mvomero_long <- t(as.matrix(co.mvomero_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.mvomero <- cooccur(mat = co.mvomero_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.mvomero) # short summary
+plot(cooccur.mvomero)    # square plot
+
+pair(mod = cooccur.mvomero, "Dinopsyllus") 
+```
+
+No associations in Mvomero
+
+## MHC ST - pestis
+
+## Iringa
+
+```{r co-occurrence-st-pestis-iringa, echo=FALSE}
+table(meta_Iringa$pestis)
+
+co.Iringa <- subset(meta_Iringa, select=c(pestis, STP1:STP9))
+
+co.Iringa_red <- co.Iringa[, colSums(co.Iringa !=0) > 0] # make sure there are no zeros in this df
+co.Iringa_red1 <- co.Iringa_red[, colSums(co.Iringa_red) > 7]
+
+co.Iringa_long <- t(as.matrix(co.Iringa_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.Iringa <- cooccur(mat = co.Iringa_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.Iringa) # short summary
+plot(cooccur.Iringa)    # square plot
+
+pair(mod = cooccur.Iringa, "pestis") 
+```
+
+No ST linked to pestis here 
+
+## Lushoto
+
+Same as above, for a 5% threshold we would need at least 6 indiv. with infection and co-occurrence not meaningful
+
+## Mbulu
+
+```{r co-occurrence-st-pestis-mbulu, echo=FALSE}
+table(meta_mbulu$pestis)
+
+co.mbulu <- subset(meta_mbulu, select=c(pestis, STP1:STP9))
+
+co.mbulu_red <- co.mbulu[, colSums(co.mbulu !=0) > 0] # make sure there are no zeros in this df
+co.mbulu_red1 <- co.mbulu_red[, colSums(co.mbulu_red) > 7]
+
+co.mbulu_long <- t(as.matrix(co.mbulu_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.mbulu <- cooccur(mat = co.mbulu_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.mbulu) # short summary
+plot(cooccur.mbulu)    # square plot
+
+pair(mod = cooccur.mbulu, "pestis") 
+```
+
+Nothing linked to pestis here
+
+
+## Mvomero
+
+```{r co-occurrence-st-pestis-mvomero, echo=FALSE}
+table(meta_mvomero$pestis)
+
+co.mvomero <- subset(meta_mvomero, select=c(pestis, STP1:STP9))
+
+co.mvomero_red <- co.mvomero[, colSums(co.mvomero !=0) > 0] # make sure there are no zeros in this df
+co.mvomero_red1 <- co.mvomero_red[, colSums(co.mvomero_red) > 3]
+
+co.mvomero_long <- t(as.matrix(co.mvomero_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.mvomero <- cooccur(mat = co.mvomero_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.mvomero) # short summary
+plot(cooccur.mvomero)    # square plot
+
+pair(mod = cooccur.mvomero, "pestis") 
+```
+
+Nothing linked to pestis here as well
+
+
+## MHC ST - fleas
+
+## Iringa
+
+```{r co-occurrence-st-fleas-iringa, echo=FALSE}
+table(meta_Iringa$Dinopsyllus)
+table(meta_Iringa$Xenopsylla)
+
+co.Iringa <- subset(meta_Iringa, select=c(Dinopsyllus, Xenopsylla, STP1:STP9))
+
+co.Iringa_red <- co.Iringa[, colSums(co.Iringa !=0) > 0] # make sure there are no zeros in this df
+co.Iringa_red1 <- co.Iringa_red[, colSums(co.Iringa_red) > 7]
+
+co.Iringa_long <- t(as.matrix(co.Iringa_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.Iringa <- cooccur(mat = co.Iringa_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.Iringa) # short summary
+plot(cooccur.Iringa)    # square plot
+
+pair(mod = cooccur.Iringa, "Dinopsyllus") 
+pair(mod = cooccur.Iringa, "Xenopsylla")
+```
+
+Xenopsylla positively associated with ST 5
+
+## Lushoto
+
+```{r co-occurrence-st-fleas-lushoto, echo=FALSE}
+table(meta_lushoto$Dinopsyllus)
+table(meta_lushoto$Xenopsylla)
+
+co.lushoto <- subset(meta_lushoto, select=c(Dinopsyllus, Xenopsylla, STP1:STP9))
+
+co.lushoto_red <- co.lushoto[, colSums(co.lushoto !=0) > 0] # make sure there are no zeros in this df
+co.lushoto_red1 <- co.lushoto_red[, colSums(co.lushoto_red) > 11]
+
+co.lushoto_long <- t(as.matrix(co.lushoto_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.lushoto <- cooccur(mat = co.lushoto_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.lushoto) # short summary
+plot(cooccur.lushoto)    # square plot
+
+pair(mod = cooccur.lushoto, "Dinopsyllus") 
+pair(mod = cooccur.lushoto, "Xenopsylla") 
+```
+
+No associations with Dino or Xeno
+
+## Mbulu
+
+```{r co-occurrence-st-fleas-mbulu, echo=FALSE}
+table(meta_mbulu$Dinopsyllus)
+table(meta_mbulu$Xenopsylla)
+
+co.mbulu <- subset(meta_mbulu, select=c(Dinopsyllus, Xenopsylla, STP1:STP9))
+
+co.mbulu_red <- co.mbulu[, colSums(co.mbulu !=0) > 0] # make sure there are no zeros in this df
+co.mbulu_red1 <- co.mbulu_red[, colSums(co.mbulu_red) > 11]
+
+co.mbulu_long <- t(as.matrix(co.mbulu_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.mbulu <- cooccur(mat = co.mbulu_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.mbulu) # short summary
+plot(cooccur.mbulu)    # square plot
+
+pair(mod = cooccur.mbulu, "Dinopsyllus") 
+```
+
+Again, only the fleas are positively associated with each other
+
+## Mvomero
+
+```{r co-occurrence-st-fleas-mvomero, echo=FALSE}
+table(meta_mvomero$Dinopsyllus)
+table(meta_mvomero$Xenopsylla)   # not present in this site
+
+co.mvomero <- subset(meta_mvomero, select=c(Dinopsyllus, STP1:STP9))
+
+co.mvomero_red <- co.mvomero[, colSums(co.mvomero !=0) > 0] # make sure there are no zeros in this df
+co.mvomero_red1 <- co.mvomero_red[, colSums(co.mvomero_red) > 3]
+
+co.mvomero_long <- t(as.matrix(co.mvomero_red1))
+```
+
+```{r, results='hide', echo=FALSE}
+# apply cooccurrence
+cooccur.mvomero <- cooccur(mat = co.mvomero_long, type = "spp_site", thresh = FALSE, spp_names = TRUE)
+```
+
+```{r}
+summary(cooccur.mvomero) # short summary
+plot(cooccur.mvomero)    # square plot
+
+pair(mod = cooccur.mvomero, "Dinopsyllus") 
+pair(mod = cooccur.mvomero, "ST5") 
+```
+
+Let's quickly sum up our co-occurrence results:
+
+1)  Iringa <br> Dino - DRB*014 positive* <br> Dino - DRB016 positive <br> Xeno - ST5 <br> DRB*016 - DRB*017 positive
+
+2)  Lushoto <br> Dino - DRB*004 positive* <br> DRB004 - DRB\*014 positive
+
+3)  Mbulu <br> Dino - Xeno positive <br> Xeno - DRB*016* <br> Xeno - DRB017 <br> DRB*016 - DRB*017
+
+4)  Mvomero <br> DRB\*014 - pestis <br> ST5 - ST1
+
+DRB*004 is in ST1* <br> DRB014 is in ST7 <br> DRB*016 is in ST1* <br> DRB017 is in ST7
+
+
+# Pestis \~ MHC
+
+Pestis seems not directly associated with MHC alleles / STs
+
+But in the co-occurrence we found an effect of allele *014 on pestis infection likelihood - let's test that in a glm
+
+```{r}
+# order the sites
+meta$Site <- factor(meta$Site, levels = c("Mbulu", "Lushoto", "Iringa", "Mvomero"))
+```
+
+```{r}
+# this is our null-model
+glm1<-(glm(pestis ~ Site  + sex , data=meta, family=binomial()))
+summary(glm1)
+
+# this is the first model we test including MHC information
+glm2<-(glm(pestis ~ Site  +  MHC.DRB.014 + sex + Nr_of_alleles_aa, data=meta, family=binomial()))
+summary(glm2)
+
+# now here we test whether one model fits the data better
+anova(glm1, glm2, test="Chisq") 
+
+# the model including the allele info does not improve the null model
+
+
+# however, if we wanted to test whether the MHC variables explain pestis infection likelihood, use dredge and check which terms are included in the top models:
+options(na.action=na.fail)
+dredge(glm2)
+
+# only including variables that were included in the top models according to dredge (below delta = 2):
+glm3<-(glm(pestis ~ Site + sex + Nr_of_alleles_aa, data=meta, family=binomial()))
+summary(glm3)
+
+anova(glm2, glm3, test="Chisq") 
+```
+
+So allele *014 is not included in the models that explain the data best.
+
+
+However we found two links between MHC allels and the fleas, let's test those in linear models <br> Here we don't separate by site, but controll for variation by site by adding it as fixed effect in our models <br>
+
+Test Dinopsyllus
+
+```{r pestis-mhc-models-DRB004, echo=FALSE}
+# this is our null-model
+glm1<-(glm(Dinopsyllus ~ Site  + sex , data=meta, family=binomial()))
+summary(glm1)
+
+# this is the first model we test including MHC information
+glm2<-(glm(Dinopsyllus ~ Site  +  MHC.DRB.004 + sex + Nr_of_alleles_aa , data=meta, family=binomial()))
+summary(glm2)
+
+# now here we test whether one model fits the data better
+anova(glm1, glm2, test="Chisq") 
+
+# this is the second model we test including MHC information, with an interaction between site and allele *004
+glm3<-(glm(Dinopsyllus ~ Site  *  MHC.DRB.004 + sex + Nr_of_alleles_aa , data=meta, family=binomial())) #hint at site-specific link to MHC allele 004
+summary(glm3)
+
+# is an interaction between site and allele *004 even better
+anova(glm2, glm3, test="Chisq")
+```
+
+To investigate which terms in our model are continuously picked in models with good fit we can use a function called dredge() from the MuMIn package
+
+```{r pestis-mhc-final-model-DRB004, echo=FALSE}
+library(MuMIn)
+options(na.action=na.fail)
+dredge(glm3)
+
+# We remove terms that are not picked in the models with good fit, because adding them does not improve model fit
+# This is our final model:
+summary(glm(Dinopsyllus ~ Site  *  MHC.DRB.004 + Nr_of_alleles_aa , data=meta, family=binomial()))
+```
+
+```{r pestis-mhc-models-DRB016-dino, echo=FALSE}
+glm1<-(glm(Dinopsyllus ~ Site  + sex , data=meta, family=binomial()))
+
+glm2<-(glm(Dinopsyllus ~ Site  +  MHC.DRB.016 + sex + Nr_of_alleles_aa , data=meta, family=binomial()))
+
+anova(glm1, glm2, test="Chisq")           # model comparison
+
+glm3<-(glm(Dinopsyllus ~ Site  *  MHC.DRB.016 + sex + Nr_of_alleles_aa , data=meta, family=binomial())) 
+
+anova(glm2, glm3, test="Chisq")           # model comparison
+```
+
+```{r pestis-mhc-final-model-DRB004-dino, echo=FALSE}
+options(na.action=na.fail)
+dredge(glm3)
+
+summary(glm(Dinopsyllus ~ Site  +  MHC.DRB.016  , data=meta, family=binomial()))
+
+glm4 <- glm(Dinopsyllus ~ Site  +  MHC.DRB.016  , data=meta, family=binomial())
+
+# plot
+library(jtools)
+
+dino.DRB016.glm <- plot_summs(glm4, inner_ci_level = .9)
+```
+
+Test Xenopsylla
+
+```{r pestis-mhc-models-DRB016-xeno, echo=FALSE}
+meta_short<-subset(meta, Site!="Mvomero") # remove the site where the flea is not found
+
+glm1<-(glm(Xenopsylla ~ Site  + sex , data=meta_short, family=binomial()))
+
+glm2<-(glm(Xenopsylla ~ Site  +  MHC.DRB.016 + sex + Nr_of_alleles_aa , data=meta_short, family=binomial()))
+
+anova(glm1, glm2, test="Chisq")           # model comparison
+
+glm3<-(glm(Xenopsylla ~ Site  *  MHC.DRB.016 + sex + Nr_of_alleles_aa , data=meta_short, family=binomial())) 
+
+anova(glm2, glm3, test="Chisq")           # model comparison
+```
+
+```{r pestis-mhc-final-model-DRB004-xeno, echo=FALSE}
+dredge(glm3)
+
+glm4<-(glm(Xenopsylla ~ Site  *  MHC.DRB.016 + sex + Nr_of_alleles_aa, data=meta_short, family=binomial()))
+summary(glm4)
+
+library(sjPlot)
+library(sjmisc)
+
+# plot version 1
+p <- plot_model(glm4, type="pred", terms= c("Site","MHC.DRB.016" ))
+
+p + theme_sjplot(base_size = 14)
+
+
+# plot version 2
+xeno.DRB016.glm <- plot_summs(glm4, inner_ci_level = .9)
+```
+
+```{r}
+# add titles to the glm figures
+
+dino.DRB016.glm1 <- dino.DRB016.glm + ggtitle("             Dinopsyllus infestation likelihood")
+xeno.DRB016.glm1 <- xeno.DRB016.glm + ggtitle("Xenopsylla infestation likelihood")
+
+# arrange panels together
+
+ggarrange(dino.DRB016.glm1, xeno.DRB016.glm1, ncol=1, labels = c("A", "B"))
+```
+
+So individuals from Mbulu were more likely to have Xenopsylla when they carried Allele *016
+
+```{r pestis-mhc-models-st1, echo=FALSE}
+meta_short<-subset(meta, Site!="Mvomero") #remove the site where the flea is not found
+
+glm1<-(glm(Xenopsylla ~ Site  + sex , data=meta_short, family=binomial()))
+
+glm2<-(glm(Xenopsylla ~ Site  +  STP1 + sex + Nr_ST , data=meta_short, family=binomial()))
+
+anova(glm1, glm2, test="Chisq")          # model comparison
+
+glm3<-(glm(Xenopsylla ~ Site  *  STP1 + sex + Nr_ST , data=meta_short, family=binomial())) #hint at site-specific link to MHC allele 004
+
+anova(glm2, glm3, test="Chisq")          # model comparison
+```
+
+```{r pestis-mhc-final-model-st1, echo=FALSE}
+library(MuMIn)
+options(na.action=na.fail)
+dredge(glm3)
+
+# Let's remove the terms that are not relevant in the top models
+glm4<-(glm(Xenopsylla ~ Site + sex + Nr_ST + STP1, data=meta_short, family=binomial()))
+summary(glm4)
+
+ggplot(meta, aes(as.factor(Nr_ST), Xenopsylla))+geom_boxplot()
+
+table(meta$Nr_ST)
+```
+
+So this effect of number of STs could be driven by the one individual with 6 ST. To test if this is the case, let's remove this one individual from the dataset and repeat the test.
+
+```{r}
+# remove the individual with 6 ST
+meta_reduced <- subset(meta_short, Sample_ID_sampling != "IM14")
+
+glm1<-(glm(Xenopsylla ~ Site  + sex , data=meta_reduced, family=binomial()))
+
+glm2<-(glm(Xenopsylla ~ Site  +  STP1 + sex + Nr_ST , data=meta_reduced, family=binomial()))
+
+anova(glm1, glm2, test="Chisq")          # model comparison
+
+glm3<-(glm(Xenopsylla ~ Site  *  STP1 + sex + Nr_ST , data=meta_reduced, family=binomial())) #hint at site-specific link to MHC allele 004
+
+anova(glm2, glm3, test="Chisq")          # model comparison
+
+# Let's remove the terms that are not relevant in the top models
+glm4<-(glm(Xenopsylla ~ Site + sex + Nr_ST + STP1, data=meta_reduced, family=binomial()))
+summary(glm4)
+```
+
+As expected without this individual the number of supertypes is not significant anymore.
